@@ -12,6 +12,8 @@ declare global {
 const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
 
+const GOOGLE_AUTH_TOKEN_KEY = 'google_auth_token'
+
 // Отладочная информация:
 console.log('API Key loaded:', API_KEY ? 'Defined (значение получено)' : 'UNDEFINED (нет значения)')
 console.log(
@@ -137,6 +139,28 @@ async function initClient() {
     return
   }
 
+  // Token rehydration logic
+  try {
+    const storedTokenString = localStorage.getItem(GOOGLE_AUTH_TOKEN_KEY)
+    if (storedTokenString) {
+      const storedToken = JSON.parse(storedTokenString)
+      if (storedToken && storedToken.expiry && storedToken.expiry > Date.now()) {
+        accessToken.value = storedToken.token
+        isSignedIn.value = true
+        // Set token for GAPI client
+        window.gapi.client.setToken({ access_token: storedToken.token })
+        console.log('Токен успешно восстановлен из localStorage')
+      } else {
+        localStorage.removeItem(GOOGLE_AUTH_TOKEN_KEY) // Remove expired token
+        console.log('Хранимый токен истек или недействителен, удален из localStorage')
+      }
+    }
+  } catch (e) {
+    console.error('Ошибка при восстановлении токена из localStorage:', e)
+    // Optionally clear corrupted token
+    localStorage.removeItem(GOOGLE_AUTH_TOKEN_KEY)
+  }
+
   try {
     // Инициализируем только GAPI client без авторизации
     await window.gapi.client.init({
@@ -169,18 +193,28 @@ async function initClient() {
         window.gapi.client.setToken({
           access_token: tokenResponse.access_token,
         })
+
+        // Store token in localStorage
+        try {
+          const expiryTimestamp = Date.now() + tokenResponse.expires_in * 1000
+          localStorage.setItem(
+            GOOGLE_AUTH_TOKEN_KEY,
+            JSON.stringify({ token: tokenResponse.access_token, expiry: expiryTimestamp }),
+          )
+          console.log('Токен сохранен в localStorage')
+        } catch (lsError) {
+          console.error('Ошибка сохранения токена в localStorage:', lsError)
+        }
       },
     })
 
     console.log('Клиент Google APIs инициализирован')
 
-    // Проверяем, есть ли уже токен
-    if (window.gapi.client.getToken() !== null) {
-      console.log('Уже есть действующий токен')
-      isSignedIn.value = true
-      const token = window.gapi.client.getToken()
-      accessToken.value = token.access_token
-    }
+    // Проверяем, есть ли уже токен (этот блок может быть избыточным после восстановления токена)
+    // if (window.gapi.client.getToken() !== null && isSignedIn.value) {
+    //   console.log('Уже есть действующий токен (проверено после инициализации клиента)')
+    //   // accessToken.value уже должен быть установлен из localStorage или нового входа
+    // }
   } catch (e) {
     console.error('Ошибка инициализации клиента:', e)
     error.value = e
@@ -232,6 +266,15 @@ async function signOut() {
 
     accessToken.value = null
     isSignedIn.value = false
+
+    // Remove token from localStorage
+    try {
+      localStorage.removeItem(GOOGLE_AUTH_TOKEN_KEY)
+      console.log('Токен удален из localStorage')
+    } catch (lsError) {
+      console.error('Ошибка удаления токена из localStorage:', lsError)
+    }
+
     console.log('Выход выполнен')
   } catch (e) {
     console.error('Ошибка при выходе:', e)
@@ -352,7 +395,7 @@ async function initializeModule() {
   try {
     // Загружаем оба скрипта параллельно
     await Promise.all([loadGisScript(), loadGapiScript()])
-    // Инициализируем клиент
+    // Инициализируем клиент (логика восстановления токена теперь в initClient)
     await initClient()
   } catch (e) {
     console.error('Ошибка инициализации модуля:', e)
