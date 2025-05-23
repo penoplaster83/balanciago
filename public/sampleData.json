@@ -1,0 +1,11 @@
+{
+  "comment": "This data will be written to Google Sheets. The actual data written will be the 'rows' array. The 'headers' can be used to write a header row if needed.",
+  "headers": ["ID", "Product Name", "Quantity", "Price"],
+  "rows": [
+    [101, "Laptop Pro 15", 5, 1200.0],
+    [102, "Wireless Mouse", 50, 25.5],
+    [103, "Keyboard Mechanical", 20, 75.0],
+    [104, "USB-C Hub", 30, 40.25],
+    [105, "Monitor 27-inch", 10, 300.0]
+  ]
+}
