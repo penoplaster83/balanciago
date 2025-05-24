@@ -37,6 +37,7 @@ const isSignedIn = ref(false)
 const accessToken = ref<string | null>(null)
 const tokenClient = ref<any>(null)
 const error = ref<any>(null)
+const isAuthLoading = ref(false)
 
 // Загружаем скрипт Google Identity Services
 function loadGisScript(): Promise<void> {
@@ -140,16 +141,23 @@ async function initClient() {
   }
 
   // Token rehydration logic
+  let restored = false
   try {
     const storedTokenString = localStorage.getItem(GOOGLE_AUTH_TOKEN_KEY)
     if (storedTokenString) {
       const storedToken = JSON.parse(storedTokenString)
-      if (storedToken && storedToken.expiry && storedToken.expiry > Date.now()) {
+      if (
+        storedToken &&
+        storedToken.expiry &&
+        storedToken.expiry > Date.now() &&
+        storedToken.token
+      ) {
         accessToken.value = storedToken.token
         isSignedIn.value = true
         // Set token for GAPI client
         window.gapi.client.setToken({ access_token: storedToken.token })
         console.log('Токен успешно восстановлен из localStorage')
+        restored = true
       } else {
         localStorage.removeItem(GOOGLE_AUTH_TOKEN_KEY) // Remove expired token
         console.log('Хранимый токен истек или недействителен, удален из localStorage')
@@ -183,18 +191,11 @@ async function initClient() {
           isSignedIn.value = false
           return
         }
-
         // Устанавливаем токен для API
         console.log('Получен токен доступа')
         accessToken.value = tokenResponse.access_token
         isSignedIn.value = true
-
-        // Устанавливаем токен для GAPI client
-        window.gapi.client.setToken({
-          access_token: tokenResponse.access_token,
-        })
-
-        // Store token in localStorage
+        window.gapi.client.setToken({ access_token: tokenResponse.access_token })
         try {
           const expiryTimestamp = Date.now() + tokenResponse.expires_in * 1000
           localStorage.setItem(
@@ -210,11 +211,10 @@ async function initClient() {
 
     console.log('Клиент Google APIs инициализирован')
 
-    // Проверяем, есть ли уже токен (этот блок может быть избыточным после восстановления токена)
-    // if (window.gapi.client.getToken() !== null && isSignedIn.value) {
-    //   console.log('Уже есть действующий токен (проверено после инициализации клиента)')
-    //   // accessToken.value уже должен быть установлен из localStorage или нового входа
-    // }
+    // Если токен был восстановлен, не требуется повторная авторизация
+    if (restored) {
+      return
+    }
   } catch (e) {
     console.error('Ошибка инициализации клиента:', e)
     error.value = e
@@ -223,21 +223,60 @@ async function initClient() {
 
 // Запрашиваем токен авторизации
 async function signIn() {
+  if (isAuthLoading.value) return
+  if (isSignedIn.value && accessToken.value) {
+    // Уже авторизован, токен валиден
+    return
+  }
   if (!tokenClient.value) {
     console.error('Token client не инициализирован')
     error.value = 'Token client не инициализирован'
     return
   }
-
   try {
+    isAuthLoading.value = true
     console.log('Запрашиваем токен доступа...')
-
+    let callbackCalled = false
     // Запрашиваем токен
     tokenClient.value.requestAccessToken({
       prompt: 'consent',
       hint: LOGIN_HINT || undefined,
+      callback: (tokenResponse: any) => {
+        callbackCalled = true
+        isAuthLoading.value = false
+        if (tokenResponse.error !== undefined) {
+          console.error('Ошибка авторизации:', tokenResponse)
+          error.value = tokenResponse
+          isSignedIn.value = false
+          return
+        }
+        // Устанавливаем токен для API
+        console.log('Получен токен доступа')
+        accessToken.value = tokenResponse.access_token
+        isSignedIn.value = true
+        window.gapi.client.setToken({ access_token: tokenResponse.access_token })
+        try {
+          const expiryTimestamp = Date.now() + tokenResponse.expires_in * 1000
+          localStorage.setItem(
+            GOOGLE_AUTH_TOKEN_KEY,
+            JSON.stringify({ token: tokenResponse.access_token, expiry: expiryTimestamp }),
+          )
+          console.log('Токен сохранен в localStorage')
+        } catch (lsError) {
+          console.error('Ошибка сохранения токена в localStorage:', lsError)
+        }
+      },
     })
+    // Если callback не вызван через 10 секунд, считаем что пользователь отменил
+    setTimeout(() => {
+      if (!callbackCalled) {
+        isAuthLoading.value = false
+        error.value = 'Авторизация отменена или не завершена.'
+        console.warn('Авторизация отменена или не завершена.')
+      }
+    }, 10000)
   } catch (e) {
+    isAuthLoading.value = false
     console.error('Ошибка авторизации:', e)
     error.value = e
   }
@@ -418,6 +457,7 @@ export function useGoogleSheets() {
     isSignedIn: readonly(isSignedIn),
     accessToken: readonly(accessToken),
     error: readonly(error),
+    isAuthLoading: readonly(isAuthLoading),
     initializeModule,
     signIn,
     signOut,

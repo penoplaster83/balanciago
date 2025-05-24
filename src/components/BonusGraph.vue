@@ -25,12 +25,13 @@ const { nodes, edges, onNodesChange, onEdgesChange, onConnect, setNodes, setEdge
       },
     },
     connectionMode: ConnectionMode.Loose,
-    fitView: true,
   })
 
 // Регистрируем пользовательский тип ноды
-nodeTypes.value = {
-  'bonus-node': BonusNode,
+if (nodeTypes) {
+  nodeTypes.value = {
+    'bonus-node': BonusNode as any,
+  }
 }
 
 // Преобразование бонусов в ноды для Vue Flow
@@ -90,6 +91,16 @@ const handleNodeChange = (changes: any) => {
     }
   })
 }
+
+// Обработчик соединения
+const handleConnect = (connection: any) => {
+  onConnect(connection)
+}
+
+// Обработчик изменения связей
+const handleEdgesChange = (changes: any) => {
+  onEdgesChange(changes)
+}
 </script>
 
 <template>
@@ -98,11 +109,11 @@ const handleNodeChange = (changes: any) => {
       :nodes="nodes"
       :edges="edges"
       @nodesChange="handleNodeChange"
-      @connect="onConnect"
-      @edgesChange="onEdgesChange"
+      @connect="handleConnect"
+      @edgesChange="handleEdgesChange"
       class="vue-flow-wrapper"
     >
-      <Background pattern="dots" gap="20" size="1" />
+      <Background pattern="dots" :gap="20" :size="1" />
       <Controls position="bottom-right" />
       <MiniMap />
     </VueFlow>
