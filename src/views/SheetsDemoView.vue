@@ -31,9 +31,39 @@
           <button @click="handleGetData" :disabled="!spreadsheetId || !rangeToGet">
             Получить данные
           </button>
-          <div v-if="fetchedData" class="data-display">
+          <div v-if="fetchedData && fetchedData.length > 0" class="data-display">
             <h4>Полученные данные:</h4>
-            <pre>{{ JSON.stringify(fetchedData, null, 2) }}</pre>
+            <table class="sheets-table">
+              <thead>
+                <tr>
+                  <th v-for="(header, index) in fetchedData[0]" :key="'header-' + index">
+                    {{ header }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, rowIndex) in fetchedData.slice(1)" :key="'row-' + rowIndex">
+                  <td
+                    v-for="(cell, cellIndex) in row"
+                    :key="'cell-' + rowIndex + '-' + cellIndex"
+                  >
+                    {{ cell }}
+                  </td>
+                </tr>
+                <!-- Fallback for single-row data, display as data row -->
+                <tr v-if="fetchedData.length === 1 && fetchedData[0].length > 0">
+                  <td
+                    v-for="(cell, cellIndex) in fetchedData[0]"
+                    :key="'cell-single-' + cellIndex"
+                  >
+                    {{ cell }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-else-if="fetchedData && fetchedData.length === 0" class="data-display">
+            <p>Данные из таблицы не получены или диапазон пуст.</p>
           </div>
         </div>
 
@@ -225,5 +255,27 @@ watch([isSignedIn, gapiClientLoaded, gisLoaded], () => {
 pre {
   white-space: pre-wrap;
   word-wrap: break-word;
+}
+
+.sheets-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+.sheets-table th,
+.sheets-table td {
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: left;
+}
+
+.sheets-table th {
+  background-color: #f2f2f2;
+  font-weight: bold;
+}
+
+.sheets-table tr:nth-child(even) {
+  background-color: #f9f9f9;
 }
 </style>
