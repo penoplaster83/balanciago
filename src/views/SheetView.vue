@@ -2,22 +2,39 @@
   <div class="sheets-demo">
     <h1>Таблица</h1>
 
-    <div v-if="!gapiClientLoaded || !gisLoaded" class="loading-notice">
+    <div v-if="isLoading && !gapiClientLoaded" class="loading-notice">
       <p>Загрузка Google API клиента... Пожалуйста, подождите.</p>
     </div>
-    <div v-else>
+
+    <div v-if="error" class="error-notice">
+      <p><strong>Ошибка:</strong> {{ error.context }}</p>
+      <pre>{{ error.details }}</pre>
+      <button @click="clearError" class="btn-clear">Очистить ошибку</button>
+    </div>
+
+    <div v-if="gapiClientLoaded && gisLoaded">
       <div class="actions-panel">
-        <div class="operation-group">
+        <div class="auth-status-navbar">
+          <button v-if="!isSignedIn" @click="signIn" :disabled="isLoading" class="btn-auth">
+            Войти через Google
+          </button>
+          <div v-else>
+            <span>Вы вошли в систему.</span>
+            <button @click="signOut" :disabled="isLoading" class="btn-auth">Выйти</button>
+          </div>
+        </div>
+
+        <div v-if="isSignedIn" class="operation-group">
           <div class="data-controls">
             <button @click="toggleDataTable" class="btn-toggle-table">
               {{ bonusDataStore.isTableVisible ? 'Скрыть таблицу' : 'Показать таблицу' }}
             </button>
-            <button @click="handleGetData" :disabled="isDataLoading" class="btn-parse">
+            <button @click="handleGetData" :disabled="isLoading" class="btn-parse">
               <span class="icon-download" style="margin-right: 4px">⬇️</span>Спарсить
             </button>
             <button
               @click="handleWriteData"
-              :disabled="isDataLoading || !bonusDataStore.hasChanges"
+              :disabled="isLoading || !bonusDataStore.hasChanges"
               class="btn-write"
             >
               <span class="icon-upload" style="margin-right: 4px">⬆️</span>Отправить
@@ -34,7 +51,8 @@
             </p>
           </div>
         </div>
-        <div v-if="bonusDataStore.isTableVisible" class="table-section">
+
+        <div v-if="bonusDataStore.isTableVisible && isSignedIn" class="table-section">
           <EditableDataTable />
         </div>
       </div>
@@ -43,7 +61,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, watch } from 'vue'
 import { useGoogleSheets } from '@/services/googleSheetsService'
 import { useConfigStore } from '@/stores/config'
 import { useBonusDataStore } from '@/stores/bonusData'
@@ -53,81 +71,43 @@ const {
   gapiClientLoaded,
   gisLoaded,
   isSignedIn,
-  isAuthLoading,
-  isDataLoading,
-  accessToken: userToken,
-  error: sheetsError,
+  isLoading,
+  error,
   signIn,
   signOut,
   getSheetData,
   writeSheetData,
   clearError,
-  trySilentSignIn,
 } = useGoogleSheets()
 
 const configStore = useConfigStore()
 const bonusDataStore = useBonusDataStore()
 
-const rangeToGet = ref(configStore.sheetsConfig.defaultRange)
-const writeDataResult = ref<any | null>(null)
-
-// Индикатор: скоро ли истекает токен
-const isTokenExpiringSoon = computed(() => {
-  const storedTokenString = localStorage.getItem('google_auth_token')
-  if (!storedTokenString) return false
-  const storedToken = JSON.parse(storedTokenString)
-  return storedToken.expiry - Date.now() < 120000
-})
-
 const showToast = ref(false)
 const toastMessage = ref('')
 
-onMounted(async () => {
-  console.log('SheetView mounted')
-})
-
-async function handleSignIn() {
-  writeDataResult.value = null
-  console.log(
-    'Клик по Войти через Google, isAuthLoading:',
-    isAuthLoading.value,
-    'isSignedIn:',
-    isSignedIn.value,
-  )
-  await signIn()
+const showSuccessToast = (message: string) => {
+  toastMessage.value = message
+  showToast.value = true
+  setTimeout(() => (showToast.value = false), 3000)
 }
 
-async function handleSignOut() {
-  writeDataResult.value = null
-  console.log('Клик по Выйти, isAuthLoading:', isAuthLoading.value, 'isSignedIn:', isSignedIn.value)
-  await signOut()
-}
-
-async function handleGetData() {
-  if (!configStore.sheetsConfig.spreadsheetId || !rangeToGet.value) {
-    alert('Пожалуйста, задайте ID таблицы в настройках и диапазон.')
+const handleGetData = async () => {
+  if (!configStore.sheetsConfig.spreadsheetId) {
+    alert('Пожалуйста, задайте ID таблицы в настройках.')
     return
   }
-  // Сначала пробуем silent-авторизацию
-  let authed = isSignedIn.value
-  if (!authed) authed = await trySilentSignIn()
-  if (!authed) {
-    await signIn()
-    authed = isSignedIn.value
-  }
-  if (!authed) return
-  writeDataResult.value = null
-  const data = await getSheetData(configStore.sheetsConfig.spreadsheetId, rangeToGet.value)
+  const data = await getSheetData(
+    configStore.sheetsConfig.spreadsheetId,
+    configStore.sheetsConfig.defaultRange,
+  )
   if (data) {
     bonusDataStore.setInitialData(data)
-    toastMessage.value = `✅ Данные загружены в стор (${data.length} записей)`
-    showToast.value = true
-    setTimeout(() => (showToast.value = false), 2500)
-    console.log('Данные загружены в стор:', data.length, 'записей')
+    showSuccessToast(`✅ Данные успешно загружены (${data.length} записей)`)
   }
 }
 
-async function handleWriteData() {
+const handleWriteData = async () => {
   if (!configStore.sheetsConfig.spreadsheetId) {
     alert('Пожалуйста, задайте ID таблицы в настройках.')
     return
@@ -136,14 +116,6 @@ async function handleWriteData() {
     alert('Нет изменений для записи.')
     return
   }
-  let authed = isSignedIn.value
-  if (!authed) authed = await trySilentSignIn()
-  if (!authed) {
-    await signIn()
-    authed = isSignedIn.value
-  }
-  if (!authed) return
-  writeDataResult.value = null
   const dataToWrite = bonusDataStore.getDataForSheets()
   if (dataToWrite.length === 0) {
     alert('Нет данных для записи.')
@@ -155,43 +127,22 @@ async function handleWriteData() {
     dataToWrite,
   )
   if (result) {
-    writeDataResult.value = result
     bonusDataStore.setInitialData(dataToWrite)
-    toastMessage.value = '✅ Данные успешно отправлены в Google Sheets'
-    showToast.value = true
-    setTimeout(() => (showToast.value = false), 2500)
+    showSuccessToast('✅ Данные успешно отправлены в Google Sheets')
   }
 }
 
-function toggleDataTable() {
+const toggleDataTable = () => {
   bonusDataStore.toggleTableVisibility()
 }
 
-function clearStoredData() {
-  bonusDataStore.clearData()
-  writeDataResult.value = null
-  console.log('Данные из стора очищены.')
-}
-
-// Очищаем ошибки при изменении состояния авторизации
-watch([isSignedIn, gapiClientLoaded, gisLoaded], () => {
-  if (sheetsError.value) {
-    // Потенциально можно очищать определенные типы ошибок или логировать их
+watch(isSignedIn, (loggedIn) => {
+  if (loggedIn) {
+    showSuccessToast('✅ Вы успешно вошли в систему.')
+  } else {
+    // Optional: show a toast on sign out
+    // showSuccessToast("Вы вышли из системы.");
   }
-})
-
-// Обновляем диапазон при изменении конфигурации
-watch(
-  () => configStore.sheetsConfig.defaultRange,
-  (newRange) => {
-    if (newRange && !rangeToGet.value) {
-      rangeToGet.value = newRange
-    }
-  },
-)
-
-watch([isSignedIn, userToken], () => {
-  clearError()
 })
 </script>
 
