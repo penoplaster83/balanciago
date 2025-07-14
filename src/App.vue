@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, RouterView } from 'vue-router'
-import { onMounted, ref, computed, watchEffect } from 'vue'
+import { onMounted, ref, computed, watchEffect, watch } from 'vue'
 import { useGoogleSheets } from '@/services/googleSheetsService'
 
 const {
@@ -17,6 +17,8 @@ const {
 
 const userEmail = ref('')
 const userAvatar = ref('')
+const errorList = ref<{ date: string; message: string; details: any }[]>([])
+const showErrorDropdown = ref(false)
 
 function parseJwt(token: string): any {
   if (!token) return null
@@ -44,6 +46,20 @@ watchEffect(() => {
     userAvatar.value = ''
   }
 })
+
+watch(error, (val) => {
+  if (val) {
+    errorList.value.unshift({
+      date: new Date().toLocaleString(),
+      message: val.context,
+      details: val.details,
+    })
+  }
+})
+
+function clearErrors() {
+  errorList.value = []
+}
 
 onMounted(() => {
   initializeModule()
@@ -79,7 +95,27 @@ function handleSignOut() {
         </template>
         <button v-else @click="handleSignIn" class="auth-btn-login">Войти</button>
       </template>
-      <span v-if="error" class="auth-error" :title="error.details">⚠️ Ошибка</span>
+      <span
+        v-if="errorList.length > 0"
+        class="auth-error"
+        @click="showErrorDropdown = !showErrorDropdown"
+        style="cursor: pointer; position: relative"
+      >
+        ⚠️ Ошибка
+        <div v-if="showErrorDropdown" class="error-dropdown">
+          <div class="error-dropdown-header">
+            <span>Ошибки</span>
+            <button @click.stop="clearErrors" class="clear-errors-btn">Очистить</button>
+          </div>
+          <ul class="error-list">
+            <li v-for="(err, idx) in errorList" :key="idx" class="error-item">
+              <div class="error-date">{{ err.date }}</div>
+              <div class="error-message">{{ err.message }}</div>
+              <div class="error-details">{{ err.details }}</div>
+            </li>
+          </ul>
+        </div>
+      </span>
     </div>
   </nav>
   <div class="app-container">
@@ -224,9 +260,72 @@ body {
   font-size: 11px;
 }
 .auth-error {
-  color: #dc3545;
+  color: #dc2626;
+  font-weight: bold;
+  margin-left: 10px;
+  position: relative;
+}
+.error-dropdown {
+  position: absolute;
+  right: 0;
+  top: 24px;
+  background: #fff;
+  border: 1px solid #f99;
+  border-radius: 6px;
+  min-width: 320px;
+  z-index: 9999;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  padding: 0;
+}
+.error-dropdown-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid #f99;
+  background: #fdd;
+  font-weight: bold;
+}
+.clear-errors-btn {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.clear-errors-btn:hover {
+  background: #fecaca;
+}
+.error-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.error-item {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f3f4f6;
+}
+.error-item:last-child {
+  border-bottom: none;
+}
+.error-date {
   font-size: 11px;
-  cursor: help;
+  color: #888;
+  margin-bottom: 2px;
+}
+.error-message {
+  font-weight: bold;
+  color: #b91c1c;
+  margin-bottom: 2px;
+}
+.error-details {
+  font-size: 12px;
+  color: #444;
+  word-break: break-all;
 }
 @media (max-width: 1023px) {
   .app-nav {

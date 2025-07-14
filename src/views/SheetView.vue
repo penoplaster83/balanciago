@@ -6,10 +6,7 @@
       <p>Загрузка Google API клиента... Пожалуйста, подождите.</p>
     </div>
     <div v-else>
-      <div v-if="!isSignedIn" class="auth-notice">
-        <p>Для работы с таблицами необходимо войти в систему.</p>
-      </div>
-      <div v-else class="actions-panel">
+      <div class="actions-panel">
         <div class="operation-group">
           <div class="data-controls">
             <button @click="toggleDataTable" class="btn-toggle-table">
@@ -111,7 +108,14 @@ async function handleGetData() {
     alert('Пожалуйста, задайте ID таблицы в настройках и диапазон.')
     return
   }
-  bonusDataStore.clearData()
+  // Сначала пробуем silent-авторизацию
+  let authed = isSignedIn.value
+  if (!authed) authed = await trySilentSignIn()
+  if (!authed) {
+    await signIn()
+    authed = isSignedIn.value
+  }
+  if (!authed) return
   writeDataResult.value = null
   const data = await getSheetData(configStore.sheetsConfig.spreadsheetId, rangeToGet.value)
   if (data) {
@@ -132,6 +136,13 @@ async function handleWriteData() {
     alert('Нет изменений для записи.')
     return
   }
+  let authed = isSignedIn.value
+  if (!authed) authed = await trySilentSignIn()
+  if (!authed) {
+    await signIn()
+    authed = isSignedIn.value
+  }
+  if (!authed) return
   writeDataResult.value = null
   const dataToWrite = bonusDataStore.getDataForSheets()
   if (dataToWrite.length === 0) {
