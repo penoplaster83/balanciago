@@ -5,7 +5,7 @@ import { ref, computed } from 'vue'
 // Helper function to generate unique IDs (if needed for dynamic creation later)
 // const generateId = () => Math.random().toString(36).substring(2, 9);
 
-export const useBonusesStore = defineStore('bonuses', () => {
+export const useBonusesStore = defineStore('bonus_properties', () => {
   const bonuses = ref<Bonus_Node[]>([
     {
       id: 'strength-boost-1',

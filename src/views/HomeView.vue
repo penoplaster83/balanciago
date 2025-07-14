@@ -11,7 +11,7 @@ import TheWelcome from '../components/TheWelcome.vue'
 
 <style>
 .bonus-graph-container {
-  width: 1000px;
+  width: 100%;
   height: 100vh;
   overflow: hidden;
   margin: 0;

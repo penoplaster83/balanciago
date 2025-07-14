@@ -1,7 +1,23 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { ref, readonly, onBeforeMount } from 'vue'
+import { ref, readonly } from 'vue'
 
-// Расширяем интерфейс Window для TypeScript
+// --- Интерфейсы ---
+interface StoredToken {
+  token: string
+  expiry: number
+}
+
+interface TokenResponse {
+  access_token: string
+  expires_in: number // Срок жизни в секундах
+  error?: string
+}
+
+interface ApiError {
+  context: string // В какой функции произошла ошибка
+  details: any // Оригинальный объект ошибки
+}
+
 declare global {
   interface Window {
     gapi: any
@@ -9,329 +25,280 @@ declare global {
   }
 }
 
+// --- Константы ---
 const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
-
 const GOOGLE_AUTH_TOKEN_KEY = 'google_auth_token'
-
-// Отладочная информация:
-console.log('API Key loaded:', API_KEY ? 'Defined (значение получено)' : 'UNDEFINED (нет значения)')
-console.log(
-  'Client ID loaded:',
-  CLIENT_ID
-    ? `Defined (начинается с: ${CLIENT_ID.substring(0, 8)}...)`
-    : 'UNDEFINED (нет значения)',
-)
-
-// Array of API discovery doc URLs for APIs used.
 const DISCOVERY_DOCS = ['https://sheets.googleapis.com/$discovery/rest?version=v4']
-// Authorization scopes required by the API; multiple scopes can be
-// included, separated by spaces.
 const SCOPES = 'https://www.googleapis.com/auth/spreadsheets'
-const LOGIN_HINT = '' // Можно оставить пустым или указать email для предзаполнения
 
+// --- Реактивное состояние ---
 const gapiLoaded = ref(false)
 const gapiClientLoaded = ref(false)
 const gisLoaded = ref(false)
 const isSignedIn = ref(false)
 const accessToken = ref<string | null>(null)
-const tokenClient = ref<any>(null)
-const error = ref<any>(null)
+const error = ref<ApiError | null>(null)
 const isAuthLoading = ref(false)
+const isDataLoading = ref(false)
+const idToken = ref<string | null>(null)
 
-// Загружаем скрипт Google Identity Services
+let tokenClient: any = null
+
+// --- Загрузка скриптов (без изменений) ---
 function loadGisScript(): Promise<void> {
   return new Promise((resolve, reject) => {
     try {
       if (window.google && window.google.accounts) {
-        console.log('Google Identity Services уже загружен')
         gisLoaded.value = true
-        resolve()
-        return
+        return resolve()
       }
-
       const script = document.createElement('script')
       script.src = 'https://accounts.google.com/gsi/client'
       script.async = true
       script.defer = true
       script.onload = () => {
-        console.log('Google Identity Services загружен')
         gisLoaded.value = true
         resolve()
       }
-      script.onerror = (e) => {
-        console.error('Ошибка загрузки Google Identity Services:', e)
-        error.value = 'Ошибка загрузки Google Identity Services'
-        reject(new Error('Ошибка загрузки Google Identity Services'))
-      }
+      script.onerror = (e) => reject(e)
       document.head.appendChild(script)
     } catch (e) {
-      console.error('Исключение при загрузке GIS:', e)
-      error.value = e
       reject(e)
     }
   })
 }
 
-// Загружаем Google API (только client, без auth2)
 function loadGapiScript(): Promise<void> {
   return new Promise((resolve, reject) => {
     try {
-      if (window.gapi) {
-        console.log('GAPI уже загружен')
+      if (window.gapi && window.gapi.client) {
         gapiLoaded.value = true
-
-        if (window.gapi.client) {
-          console.log('GAPI client уже загружен')
-          gapiClientLoaded.value = true
-          resolve()
-          return
-        }
-
-        // Загружаем только client без auth2
-        window.gapi.load('client', () => {
-          console.log('GAPI client загружен')
-          gapiClientLoaded.value = true
-          resolve()
-        })
-        return
+        gapiClientLoaded.value = true
+        return resolve()
       }
-
       const script = document.createElement('script')
       script.src = 'https://apis.google.com/js/api.js'
       script.async = true
       script.defer = true
       script.onload = () => {
-        console.log('GAPI загружен')
         gapiLoaded.value = true
-
-        // Загружаем только client без auth2
         window.gapi.load('client', () => {
-          console.log('GAPI client загружен')
           gapiClientLoaded.value = true
           resolve()
         })
       }
-      script.onerror = (e) => {
-        console.error('Ошибка загрузки GAPI:', e)
-        error.value = 'Ошибка загрузки GAPI'
-        reject(new Error('Ошибка загрузки GAPI'))
-      }
+      script.onerror = (e) => reject(e)
       document.body.appendChild(script)
     } catch (e) {
-      console.error('Исключение при загрузке GAPI:', e)
-      error.value = e
       reject(e)
     }
   })
 }
 
-// Инициализируем Google API client
-async function initClient() {
-  if (!window.gapi || !window.gapi.client) {
-    console.error('GAPI client не загружен')
-    error.value = 'GAPI client не загружен'
-    return
-  }
+// --- Логика Аутентификации ---
 
-  if (!window.google || !window.google.accounts) {
-    console.error('Google Identity Services не загружен')
-    error.value = 'Google Identity Services не загружен'
-    return
-  }
-
-  // Token rehydration logic
-  let restored = false
-  try {
-    const storedTokenString = localStorage.getItem(GOOGLE_AUTH_TOKEN_KEY)
-    if (storedTokenString) {
-      const storedToken = JSON.parse(storedTokenString)
-      if (
-        storedToken &&
-        storedToken.expiry &&
-        storedToken.expiry > Date.now() &&
-        storedToken.token
-      ) {
-        accessToken.value = storedToken.token
-        isSignedIn.value = true
-        // Set token for GAPI client
-        window.gapi.client.setToken({ access_token: storedToken.token })
-        console.log('Токен успешно восстановлен из localStorage')
-        restored = true
-      } else {
-        localStorage.removeItem(GOOGLE_AUTH_TOKEN_KEY) // Remove expired token
-        console.log('Хранимый токен истек или недействителен, удален из localStorage')
-      }
-    }
-  } catch (e) {
-    console.error('Ошибка при восстановлении токена из localStorage:', e)
-    // Optionally clear corrupted token
+/**
+ * Обрабатывает успешный ответ от сервера авторизации.
+ * Сохраняет токен, обновляет состояние и устанавливает токен для GAPI клиента.
+ * @param response Ответ от сервера Google.
+ */
+function handleSuccessfulToken(response: TokenResponse & { id_token?: string }) {
+  console.log('Ответ Google на запрос токена:', response)
+  // Эта функция теперь обрабатывает только успешные ответы
+  // или ошибки от явной попытки входа через signIn()
+  if (response.error) {
+    error.value = { context: 'handleSuccessfulToken', details: response }
+    isSignedIn.value = false
+    accessToken.value = null
+    idToken.value = null
+    isAuthLoading.value = false
     localStorage.removeItem(GOOGLE_AUTH_TOKEN_KEY)
+    return
   }
+
+  error.value = null
+  accessToken.value = response.access_token
+  isSignedIn.value = true
+  if (response.id_token) {
+    idToken.value = response.id_token
+  }
+  window.gapi.client.setToken({ access_token: response.access_token })
+  console.log('Токен доступа успешно получен/обновлен.')
 
   try {
-    // Инициализируем только GAPI client без авторизации
-    await window.gapi.client.init({
-      apiKey: API_KEY,
-      discoveryDocs: DISCOVERY_DOCS,
-    })
-
-    // Логируем информацию
-    console.log('Client ID used:', CLIENT_ID)
-    console.log('Current origin:', window.location.origin)
-
-    // Создаем tokenClient для авторизации через Google Identity Services
-    tokenClient.value = window.google.accounts.oauth2.initTokenClient({
-      client_id: CLIENT_ID,
-      scope: SCOPES,
-      callback: (tokenResponse: any) => {
-        if (tokenResponse.error !== undefined) {
-          console.error('Ошибка авторизации:', tokenResponse)
-          error.value = tokenResponse
-          isSignedIn.value = false
-          return
-        }
-        // Устанавливаем токен для API
-        console.log('Получен токен доступа')
-        accessToken.value = tokenResponse.access_token
-        isSignedIn.value = true
-        window.gapi.client.setToken({ access_token: tokenResponse.access_token })
-        try {
-          const expiryTimestamp = Date.now() + tokenResponse.expires_in * 1000
-          localStorage.setItem(
-            GOOGLE_AUTH_TOKEN_KEY,
-            JSON.stringify({ token: tokenResponse.access_token, expiry: expiryTimestamp }),
-          )
-          console.log('Токен сохранен в localStorage')
-        } catch (lsError) {
-          console.error('Ошибка сохранения токена в localStorage:', lsError)
-        }
-      },
-    })
-
-    console.log('Клиент Google APIs инициализирован')
-
-    // Если токен был восстановлен, не требуется повторная авторизация
-    if (restored) {
-      return
-    }
-  } catch (e) {
-    console.error('Ошибка инициализации клиента:', e)
-    error.value = e
+    const expiryTimestamp = Date.now() + response.expires_in * 1000
+    const tokenToStore: StoredToken = { token: response.access_token, expiry: expiryTimestamp }
+    localStorage.setItem(GOOGLE_AUTH_TOKEN_KEY, JSON.stringify(tokenToStore))
+  } catch (lsError) {
+    error.value = { context: 'localStorage', details: lsError }
+    console.error('Ошибка сохранения токена в localStorage:', lsError)
   }
+
+  // Убираем isAuthLoading в конце, чтобы интерфейс разблокировался
+  isAuthLoading.value = false
 }
 
-// Запрашиваем токен авторизации
-async function signIn() {
-  if (isAuthLoading.value) return
-  if (isSignedIn.value && accessToken.value) {
-    // Уже авторизован, токен валиден
-    return
-  }
-  if (!tokenClient.value) {
-    console.error('Token client не инициализирован')
-    error.value = 'Token client не инициализирован'
-    return
-  }
+/**
+ * Пытается войти в систему или обновить токен в "тихом" режиме (без взаимодействия с пользователем).
+ * @returns Promise<boolean> который разрешается в `true` если обновление прошло успешно.
+ */
+async function trySilentSignIn(): Promise<boolean> {
+  if (isAuthLoading.value || !tokenClient || isSignedIn.value) return false
+  console.log('Попытка тихого входа / обновления токена...')
+  isAuthLoading.value = true
+
+  return new Promise((resolve) => {
+    try {
+      tokenClient.requestAccessToken({
+        prompt: '', // `prompt: ''` означает "тихий" режим
+        callback: (response: TokenResponse) => {
+          if (response.error) {
+            console.warn('Тихое обновление токена не удалось:', response.error)
+            // Не вызываем signOut(). Просто очищаем локальное состояние.
+            // Пользователь теперь "не авторизован" и может войти снова вручную.
+            accessToken.value = null
+            isSignedIn.value = false
+            localStorage.removeItem(GOOGLE_AUTH_TOKEN_KEY)
+            if (window.gapi?.client) {
+              window.gapi.client.setToken(null)
+            }
+            isAuthLoading.value = false
+            resolve(false)
+          } else {
+            // Успех! Используем стандартный обработчик.
+            handleSuccessfulToken(response)
+            isAuthLoading.value = false
+            resolve(true)
+          }
+        },
+      })
+    } catch (e) {
+      isAuthLoading.value = false
+      error.value = { context: 'trySilentSignIn', details: e }
+      resolve(false)
+    }
+  })
+}
+
+/**
+ * Инициирует интерактивный вход в систему, запрашивая разрешение пользователя.
+ * Вызывается по клику на кнопку "Войти".
+ */
+function signIn() {
+  if (isAuthLoading.value || !tokenClient || isSignedIn.value) return
+  console.log('Запрос на авторизацию...')
+  isAuthLoading.value = true
+
   try {
-    isAuthLoading.value = true
-    console.log('Запрашиваем токен доступа...')
-    let callbackCalled = false
-    // Запрашиваем токен
-    tokenClient.value.requestAccessToken({
-      prompt: 'consent',
-      hint: LOGIN_HINT || undefined,
-      callback: (tokenResponse: any) => {
-        callbackCalled = true
-        isAuthLoading.value = false
-        if (tokenResponse.error !== undefined) {
-          console.error('Ошибка авторизации:', tokenResponse)
-          error.value = tokenResponse
-          isSignedIn.value = false
-          return
-        }
-        // Устанавливаем токен для API
-        console.log('Получен токен доступа')
-        accessToken.value = tokenResponse.access_token
-        isSignedIn.value = true
-        window.gapi.client.setToken({ access_token: tokenResponse.access_token })
-        try {
-          const expiryTimestamp = Date.now() + tokenResponse.expires_in * 1000
-          localStorage.setItem(
-            GOOGLE_AUTH_TOKEN_KEY,
-            JSON.stringify({ token: tokenResponse.access_token, expiry: expiryTimestamp }),
-          )
-          console.log('Токен сохранен в localStorage')
-        } catch (lsError) {
-          console.error('Ошибка сохранения токена в localStorage:', lsError)
-        }
-      },
-    })
-    // Если callback не вызван через 10 секунд, считаем что пользователь отменил
-    setTimeout(() => {
-      if (!callbackCalled) {
-        isAuthLoading.value = false
-        error.value = 'Авторизация отменена или не завершена.'
-        console.warn('Авторизация отменена или не завершена.')
-      }
-    }, 10000)
+    tokenClient.requestAccessToken({})
   } catch (e) {
     isAuthLoading.value = false
-    console.error('Ошибка авторизации:', e)
-    error.value = e
-  }
-}
-
-// Выходим из аккаунта
-async function signOut() {
-  if (!window.google || !window.google.accounts) {
-    console.error('Google Identity Services не загружен')
-    error.value = 'Google Identity Services не загружен'
-    return
-  }
-
-  try {
-    // Очищаем токен в GAPI
-    if (window.gapi && window.gapi.client) {
-      window.gapi.client.setToken(null)
-    }
-
-    // Отзываем доступ через Google Identity Services
-    if (accessToken.value) {
-      window.google.accounts.oauth2.revoke(accessToken.value, () => {
-        console.log('Токен доступа отозван')
-      })
-    }
-
-    accessToken.value = null
-    isSignedIn.value = false
-
-    // Remove token from localStorage
-    try {
-      localStorage.removeItem(GOOGLE_AUTH_TOKEN_KEY)
-      console.log('Токен удален из localStorage')
-    } catch (lsError) {
-      console.error('Ошибка удаления токена из localStorage:', lsError)
-    }
-
-    console.log('Выход выполнен')
-  } catch (e) {
-    console.error('Ошибка при выходе:', e)
-    error.value = e
+    error.value = { context: 'signIn', details: e }
+    console.error('Ошибка при вызове requestAccessToken:', e)
   }
 }
 
 /**
- * Method to get data from a specified sheet.
- * @param spreadsheetId The ID of the spreadsheet.
- * @param range The A1 notation of the range to retrieve, e.g., "Sheet1!A1:B5".
+ * Выход из системы. Очищает локальное состояние.
+ * По умолчанию НЕ отзывает доступ приложению.
+ */
+async function signOut() {
+  const token = accessToken.value
+  if (token && window.google) {
+    // Чтобы полностью отозвать токен (потребуется повторная авторизация
+    // с экраном разрешений при следующем входе), раскомментируйте следующую строку.
+    // window.google.accounts.oauth2.revoke(token, () => console.log('Доступ отозван.'));
+  }
+
+  accessToken.value = null
+  isSignedIn.value = false
+  isAuthLoading.value = false // Убедимся что флаг загрузки сброшен
+  localStorage.removeItem(GOOGLE_AUTH_TOKEN_KEY)
+  console.log('Выход выполнен, локальные данные очищены.')
+
+  if (window.gapi?.client) {
+    window.gapi.client.setToken(null)
+  }
+}
+
+/**
+ * Инициализирует GAPI и GIS клиенты.
+ */
+async function initClient() {
+  if (!window.gapi || !window.google) {
+    throw new Error('GAPI или GIS скрипты не загружены.')
+  }
+
+  await window.gapi.client.init({
+    apiKey: API_KEY,
+    discoveryDocs: DISCOVERY_DOCS,
+  })
+
+  if (tokenClient) return
+
+  tokenClient = window.google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: 'openid email profile https://www.googleapis.com/auth/spreadsheets',
+    include_granted_scopes: true,
+    callback: handleSuccessfulToken,
+    error_callback: (err: any) => {
+      isAuthLoading.value = false
+      let details = err.type || 'Unknown error'
+
+      // Превращаем технические ошибки в понятные сообщения
+      if (details === 'popup_closed') {
+        details = 'Вход был отменен. Пожалуйста, попробуйте еще раз.'
+      } else if (details === 'popup_failed_to_open') {
+        details =
+          'Не удалось открыть окно входа. Проверьте, не блокирует ли ваш браузер всплывающие окна.'
+      }
+
+      error.value = { context: 'signInError', details: details }
+      console.error('Ошибка входа:', err)
+    },
+  })
+}
+
+/**
+ * Проверяет, валиден ли токен перед API вызовом, и обновляет его, если он скоро истечет.
+ * @returns Promise<boolean> `true`, если токен валиден или был успешно обновлен.
+ */
+async function ensureValidToken(): Promise<boolean> {
+  if (!isSignedIn.value) return false
+
+  const storedTokenString = localStorage.getItem(GOOGLE_AUTH_TOKEN_KEY)
+  if (!storedTokenString) {
+    isSignedIn.value = false
+    return false
+  }
+
+  const storedToken: StoredToken = JSON.parse(storedTokenString)
+  // Проверяем, истекает ли токен в ближайшие 2 минуты (120,000 мс)
+  const isTokenExpiringSoon = storedToken.expiry - Date.now() < 120000
+
+  if (isTokenExpiringSoon) {
+    console.log('Срок действия токена скоро истечет, пытаемся обновить...')
+    return await trySilentSignIn()
+  }
+
+  return true
+}
+
+// --- Функции для работы с Google Sheets ---
+
+/**
+ * Получает данные из таблицы.
  */
 async function getSheetData(spreadsheetId: string, range: string): Promise<any[][] | undefined> {
-  if (!isSignedIn.value || !window.gapi?.client?.sheets) {
-    error.value = 'Пользователь не авторизован или API Sheets не загружен'
-    console.error('Пользователь не авторизован или API Sheets не загружен')
+  const tokenValid = await ensureValidToken()
+  if (!tokenValid) {
+    error.value = { context: 'getSheetData', details: 'Сессия истекла. Пожалуйста, войдите снова.' }
+    isSignedIn.value = false // Обновляем UI
     return
   }
+
+  isDataLoading.value = true
   try {
     const response = await window.gapi.client.sheets.spreadsheets.values.get({
       spreadsheetId: spreadsheetId,
@@ -339,130 +306,109 @@ async function getSheetData(spreadsheetId: string, range: string): Promise<any[]
     })
     return response.result.values
   } catch (e: any) {
-    error.value = e.result?.error || e
-    console.error('Ошибка при получении данных из таблицы:', e)
-    return undefined
+    error.value = { context: 'getSheetData', details: e.result?.error || e }
+  } finally {
+    isDataLoading.value = false
   }
 }
 
 /**
- * Method to write data to a specified sheet.
- * @param spreadsheetId The ID of the spreadsheet.
- * @param range The A1 notation of the range to write to, e.g., "Sheet1!A1".
- * @param values A 2D array of values to write.
+ * Записывает данные в таблицу.
  */
 async function writeSheetData(
   spreadsheetId: string,
   range: string,
   values: any[][],
 ): Promise<any | undefined> {
-  if (!isSignedIn.value || !window.gapi?.client?.sheets) {
-    error.value = 'Пользователь не авторизован или API Sheets не загружен'
-    console.error('Пользователь не авторизован или API Sheets не загружен')
+  const tokenValid = await ensureValidToken()
+  if (!tokenValid) {
+    error.value = {
+      context: 'writeSheetData',
+      details: 'Сессия истекла. Пожалуйста, войдите снова.',
+    }
+    isSignedIn.value = false // Обновляем UI
     return
   }
+
+  isDataLoading.value = true
   try {
     const response = await window.gapi.client.sheets.spreadsheets.values.update({
       spreadsheetId: spreadsheetId,
       range: range,
       valueInputOption: 'USER_ENTERED',
-      resource: {
-        values: values,
-      },
+      resource: { values },
     })
     return response.result
   } catch (e: any) {
-    error.value = e.result?.error || e
-    console.error('Ошибка при записи данных в таблицу:', e)
-    return undefined
+    error.value = { context: 'writeSheetData', details: e.result?.error || e }
+  } finally {
+    isDataLoading.value = false
   }
 }
 
 /**
- * Fetches data from a local JSON file (in public folder) and writes it to the specified sheet.
- * The JSON file is expected to have a "rows" property containing an array of arrays.
- * @param spreadsheetId The ID of the spreadsheet.
- * @param sheetName The name of the sheet to write to (e.g., "Sheet1"). Data will be written starting at A1.
- * @param jsonPath The path to the JSON file relative to the public folder (e.g., "/sampleData.json").
+ * Инициализирует модуль: загружает скрипты, клиенты и пытается восстановить сессию.
  */
-async function fetchAndWriteJsonData(
-  spreadsheetId: string,
-  sheetName: string,
-  jsonPath: string,
-): Promise<any | undefined> {
-  if (!isSignedIn.value) {
-    error.value = 'Пользователь не авторизован'
-    console.error('Пользователь не авторизован')
-    return
-  }
-  try {
-    const response = await fetch(jsonPath)
-    if (!response.ok) {
-      throw new Error(`Не удалось загрузить JSON данные из ${jsonPath}: ${response.statusText}`)
-    }
-    const jsonData = await response.json()
-
-    // Basic transformation: assuming jsonData has a "rows" property which is an array of arrays.
-    // You can implement more complex transformation logic here.
-    const valuesToWrite: any[][] = jsonData.rows
-    if (!Array.isArray(valuesToWrite) || !valuesToWrite.every((row) => Array.isArray(row))) {
-      throw new Error('Неверная структура JSON: свойство "rows" должно быть массивом массивов')
-    }
-
-    // If you want to write headers as well (optional):
-    // const headers: string[] = jsonData.headers;
-    // if (headers && Array.isArray(headers)) {
-    //   valuesToWrite.unshift(headers);
-    // }
-
-    if (valuesToWrite.length === 0) {
-      console.warn('Нет данных для записи из JSON')
-      return { message: 'Нет данных для записи' }
-    }
-
-    const range = `${sheetName}!A1` // Write starting from A1 of the specified sheet
-    return await writeSheetData(spreadsheetId, range, valuesToWrite)
-  } catch (e: any) {
-    error.value = e.message || e
-    console.error('Ошибка при загрузке или записи JSON данных:', e)
-    return undefined
-  }
-}
-
-// Инициализация модуля
 async function initializeModule() {
   try {
-    // Загружаем оба скрипта параллельно
+    isAuthLoading.value = true
     await Promise.all([loadGisScript(), loadGapiScript()])
-    // Инициализируем клиент (логика восстановления токена теперь в initClient)
     await initClient()
+
+    const storedTokenString = localStorage.getItem(GOOGLE_AUTH_TOKEN_KEY)
+    if (storedTokenString) {
+      const storedToken: StoredToken = JSON.parse(storedTokenString)
+      // Проверяем, что токен не просто есть, а еще и валиден
+      if (storedToken.token && storedToken.expiry > Date.now()) {
+        console.log('Восстанавливаем сессию из localStorage.')
+        handleSuccessfulToken({
+          access_token: storedToken.token,
+          expires_in: (storedToken.expiry - Date.now()) / 1000,
+        })
+      } else {
+        // Токен в хранилище истек, пробуем обновить его тихо
+        await trySilentSignIn()
+      }
+    } else {
+      // Токена нет, пробуем войти тихо (для вернувшихся пользователей)
+      await trySilentSignIn()
+    }
   } catch (e) {
-    console.error('Ошибка инициализации модуля:', e)
-    error.value = e
+    isAuthLoading.value = false
+    console.error('Критическая ошибка при инициализации модуля:', e)
+    error.value = { context: 'initializeModule', details: e }
+  } finally {
+    // Убеждаемся, что isAuthLoading сброшен в любом случае
+    if (!isSignedIn.value) {
+      isAuthLoading.value = false
+    }
   }
 }
 
-// Запускаем инициализацию при загрузке модуля
-if (typeof window !== 'undefined') {
-  // Запускаем инициализацию после небольшой задержки, чтобы дать время DOM полностью загрузиться
-  setTimeout(initializeModule, 100)
+function clearError() {
+  error.value = null
 }
 
-// Expose reactive state and methods
+// --- Экспорт ---
 export function useGoogleSheets() {
   return {
-    gapiLoaded: readonly(gapiLoaded),
+    // Состояния
+    isSignedIn: readonly(isSignedIn),
+    isAuthLoading: readonly(isAuthLoading),
+    isDataLoading: readonly(isDataLoading),
+    error: readonly(error),
     gapiClientLoaded: readonly(gapiClientLoaded),
     gisLoaded: readonly(gisLoaded),
-    isSignedIn: readonly(isSignedIn),
     accessToken: readonly(accessToken),
-    error: readonly(error),
-    isAuthLoading: readonly(isAuthLoading),
+    idToken: readonly(idToken),
+
+    // Методы
     initializeModule,
     signIn,
     signOut,
     getSheetData,
     writeSheetData,
-    fetchAndWriteJsonData,
+    clearError,
+    trySilentSignIn,
   }
 }

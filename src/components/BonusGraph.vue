@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { onMounted, computed } from 'vue'
+import { onMounted, computed, markRaw } from 'vue'
 import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { useBonusesStore } from '@/stores/bonuses'
 import type { Edge, Node } from '@vue-flow/core'
-import type { Bonus } from '@/types/Bonus'
+import type { Bonus_Node } from '@/types/Bonus'
 import BonusNode from './BonusNode.vue'
 
 import '@vue-flow/core/dist/style.css'
@@ -18,6 +18,7 @@ const bonusesStore = useBonusesStore()
 
 const { nodes, edges, onNodesChange, onEdgesChange, onConnect, setNodes, setEdges, nodeTypes } =
   useVueFlow({
+    id: 'bonus-graph',
     defaultEdgeOptions: {
       type: 'smoothstep',
       style: {
@@ -30,12 +31,12 @@ const { nodes, edges, onNodesChange, onEdgesChange, onConnect, setNodes, setEdge
 // Регистрируем пользовательский тип ноды
 if (nodeTypes) {
   nodeTypes.value = {
-    'bonus-node': BonusNode as any,
+    'bonus-node': markRaw(BonusNode) as any,
   }
 }
 
 // Преобразование бонусов в ноды для Vue Flow
-const createNodesFromBonuses = (bonuses: Bonus[]): Node[] => {
+const createNodesFromBonuses = (bonuses: Bonus_Node[]): Node[] => {
   return bonuses.map((bonus) => ({
     id: bonus.id,
     position: { x: bonus.x, y: bonus.y },
@@ -49,7 +50,7 @@ const createNodesFromBonuses = (bonuses: Bonus[]): Node[] => {
 }
 
 // Создание связей между нодами
-const createEdgesFromBonuses = (bonuses: Bonus[]): Edge[] => {
+const createEdgesFromBonuses = (bonuses: Bonus_Node[]): Edge[] => {
   const allEdges: Edge[] = []
 
   bonuses.forEach((bonus) => {
