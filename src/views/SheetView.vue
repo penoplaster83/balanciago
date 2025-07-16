@@ -28,10 +28,8 @@
               {{ toastMessage }}
             </div>
           </transition>
-          <div class="data-status">
-            <p v-if="bonusDataStore.hasChanges" class="changes-status">
-              🔄 Есть изменения в данных
-            </p>
+          <div v-if="bonusDataStore.hasChanges" class="data-status">
+            <p class="changes-status">🔄 Есть изменения в данных</p>
           </div>
         </div>
         <div v-if="bonusDataStore.isTableVisible" class="table-section">

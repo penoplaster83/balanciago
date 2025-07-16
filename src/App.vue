@@ -85,16 +85,21 @@ function handleSignOut() {
     <RouterLink to="/config">Настройки</RouterLink>
     <div class="auth-status-navbar">
       <template v-if="isAuthLoading">
-        <span class="auth-loading">Загрузка...</span>
+        <span class="auth-indicator">
+          <span class="spinner"></span>
+          <span class="auth-indicator-text">Authorization...</span>
+        </span>
       </template>
       <template v-else>
         <template v-if="isSignedIn">
           <img v-if="userAvatar" :src="userAvatar" class="user-avatar" :alt="userEmail" />
           <span v-if="userEmail" class="user-email">{{ userEmail }}</span>
-          <button @click="handleSignOut" class="auth-btn-door" title="Выйти">🚪 Выйти</button>
         </template>
-        <button v-else @click="handleSignIn" class="auth-btn-login">Войти</button>
       </template>
+      <button v-if="isSignedIn" @click="handleSignOut" class="auth-btn-door" title="Выйти">
+        🚪 Выйти
+      </button>
+      <button v-else @click="handleSignIn" class="auth-btn-login">Войти</button>
       <span
         v-if="errorList.length > 0"
         class="auth-error"
@@ -151,13 +156,13 @@ body {
   width: 100%;
   min-height: 100vh;
   margin-top: 0;
-  padding-top: 20px;
+  padding-top: 56px; /* высота navbar + запас */
 }
 
 .app-nav {
   display: flex;
-  gap: 1rem;
-  padding: 0.5rem 1rem;
+  gap: 0.5rem;
+  padding: 0.5rem 1.5rem;
   background-color: #f3f4f6;
   border-bottom: 1px solid #e5e7eb;
   z-index: 1000;
@@ -185,9 +190,12 @@ body {
 .app-nav a {
   color: #374151;
   text-decoration: none;
-  padding: 0.5rem;
+  padding: 0.5rem 1rem;
   border-radius: 4px;
   transition: all 0.2s ease;
+  height: 36px;
+  display: flex;
+  align-items: center;
 }
 
 .app-nav a:hover {
@@ -203,8 +211,10 @@ body {
 .app-content {
   flex: 1;
   width: 100%;
-  padding-top: 0px;
+  padding-top: 0;
   overflow: visible;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
 }
 
 .user-avatar {
@@ -219,16 +229,20 @@ body {
   color: #444;
   margin-right: 8px;
 }
-.auth-btn-door {
+.auth-btn-door,
+.auth-btn-login {
   background: #fee2e2;
   color: #b91c1c;
   border: none;
   border-radius: 4px;
-  padding: 4px 14px;
+  padding: 0.5rem 1rem;
   font-size: 14px;
   cursor: pointer;
   margin-left: 8px;
   transition: background 0.2s;
+  height: 36px;
+  display: flex;
+  align-items: center;
 }
 .auth-btn-door:hover:not(:disabled) {
   background: #fecaca;
@@ -236,17 +250,6 @@ body {
 .auth-btn-door:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-.auth-btn-login {
-  background: #007bff;
-  color: #fff;
-  border: none;
-  border-radius: 4px;
-  padding: 4px 14px;
-  font-size: 14px;
-  cursor: pointer;
-  margin-left: 8px;
-  transition: background 0.2s;
 }
 .auth-btn-login:hover:not(:disabled) {
   background: #0056b3;
@@ -326,6 +329,35 @@ body {
   font-size: 12px;
   color: #444;
   word-break: break-all;
+}
+.auth-indicator {
+  display: flex;
+  align-items: center;
+  margin-right: 12px;
+}
+.auth-indicator-text {
+  margin-left: 7px;
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 3px solid #c7d2fe;
+  border-top: 3px solid #2563eb;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  display: inline-block;
+}
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 @media (max-width: 1023px) {
   .app-nav {

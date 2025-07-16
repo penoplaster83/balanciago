@@ -293,8 +293,10 @@ async function ensureValidToken(): Promise<boolean> {
 async function getSheetData(spreadsheetId: string, range: string): Promise<any[][] | undefined> {
   const tokenValid = await ensureValidToken()
   if (!tokenValid) {
-    error.value = { context: 'getSheetData', details: 'Сессия истекла. Пожалуйста, войдите снова.' }
-    isSignedIn.value = false // Обновляем UI
+    // error.value = { context: 'getSheetData', details: 'Сессия истекла. Пожалуйста, войдите снова.' }
+    // isSignedIn.value = false // Обновляем UI
+    console.warn('getSheetData: Сессия истекла. Пожалуйста, войдите снова.')
+    isSignedIn.value = false
     return
   }
 
@@ -322,11 +324,13 @@ async function writeSheetData(
 ): Promise<any | undefined> {
   const tokenValid = await ensureValidToken()
   if (!tokenValid) {
-    error.value = {
-      context: 'writeSheetData',
-      details: 'Сессия истекла. Пожалуйста, войдите снова.',
-    }
-    isSignedIn.value = false // Обновляем UI
+    // error.value = {
+    //   context: 'writeSheetData',
+    //   details: 'Сессия истекла. Пожалуйста, войдите снова.',
+    // }
+    // isSignedIn.value = false // Обновляем UI
+    console.warn('writeSheetData: Сессия истекла. Пожалуйста, войдите снова.')
+    isSignedIn.value = false
     return
   }
 
