@@ -44,6 +44,7 @@ const isDataLoading = ref(false)
 const idToken = ref<string | null>(null)
 
 let tokenClient: any = null
+let signInResolver: ((value: boolean) => void) | null = null
 
 // --- Загрузка скриптов (без изменений) ---
 function loadGisScript(): Promise<void> {
@@ -114,6 +115,10 @@ function handleSuccessfulToken(response: TokenResponse & { id_token?: string }) 
     idToken.value = null
     isAuthLoading.value = false
     localStorage.removeItem(GOOGLE_AUTH_TOKEN_KEY)
+    if (signInResolver) {
+      signInResolver(false)
+      signInResolver = null
+    }
     return
   }
 
@@ -137,6 +142,10 @@ function handleSuccessfulToken(response: TokenResponse & { id_token?: string }) 
 
   // Убираем isAuthLoading в конце, чтобы интерфейс разблокировался
   isAuthLoading.value = false
+  if (signInResolver) {
+    signInResolver(true)
+    signInResolver = null
+  }
 }
 
 /**
@@ -185,18 +194,28 @@ async function trySilentSignIn(): Promise<boolean> {
  * Инициирует интерактивный вход в систему, запрашивая разрешение пользователя.
  * Вызывается по клику на кнопку "Войти".
  */
-function signIn() {
-  if (isAuthLoading.value || !tokenClient || isSignedIn.value) return
+function signIn(): Promise<boolean> {
+  if (isAuthLoading.value || !tokenClient || isSignedIn.value) {
+    return Promise.resolve(false)
+  }
   console.log('Запрос на авторизацию...')
   isAuthLoading.value = true
 
-  try {
-    tokenClient.requestAccessToken({})
-  } catch (e) {
-    isAuthLoading.value = false
-    error.value = { context: 'signIn', details: e }
-    console.error('Ошибка при вызове requestAccessToken:', e)
-  }
+  return new Promise((resolve) => {
+    signInResolver = resolve
+    try {
+      tokenClient.requestAccessToken({})
+    } catch (e) {
+      isAuthLoading.value = false
+      error.value = { context: 'signIn', details: e }
+      console.error('Ошибка при вызове requestAccessToken:', e)
+      if (signInResolver) {
+        signInResolver(false)
+        signInResolver = null
+      }
+      resolve(false)
+    }
+  })
 }
 
 /**
@@ -256,6 +275,10 @@ async function initClient() {
 
       error.value = { context: 'signInError', details: details }
       console.error('Ошибка входа:', err)
+      if (signInResolver) {
+        signInResolver(false)
+        signInResolver = null
+      }
     },
   })
 }
