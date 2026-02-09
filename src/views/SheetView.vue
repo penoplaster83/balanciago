@@ -110,8 +110,7 @@ async function handleGetData() {
   let authed = isSignedIn.value
   if (!authed) authed = await trySilentSignIn()
   if (!authed) {
-    await signIn()
-    authed = isSignedIn.value
+    authed = await signIn()
   }
   if (!authed) return
   writeDataResult.value = null
@@ -137,8 +136,7 @@ async function handleWriteData() {
   let authed = isSignedIn.value
   if (!authed) authed = await trySilentSignIn()
   if (!authed) {
-    await signIn()
-    authed = isSignedIn.value
+    authed = await signIn()
   }
   if (!authed) return
   writeDataResult.value = null

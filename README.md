@@ -40,7 +40,7 @@ Balanciago is a web application designed for game designers to visualize, create
 
 ## Google Sheets Demo
 
-The application also includes a demonstration page (`/sheets-demo`) showcasing integration with Google Sheets. This feature allows for:
+The application also includes a demonstration page (`/sheet`) showcasing integration with Google Sheets. This feature allows for:
 
 *   Authenticating with a Google account.
 *   Reading data from a specified Google Sheet.
